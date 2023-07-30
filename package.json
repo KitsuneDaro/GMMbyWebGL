@@ -15,5 +15,8 @@
   "compilerOptions": {},
   "include": [
     "./src/**/*"
-  ]
+  ],
+  "dependencies": {
+    "typescript": "^5.1.6"
+  }
 }
