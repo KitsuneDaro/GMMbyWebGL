@@ -1,5 +1,13 @@
 import { GMM } from "./GMM";
 
 window.addEventListener('onload', () => {
-    const gmm = new GMM();
+    const data = [
+        1.0, 2.0, 3.0,
+        1.1, 2.2, 3.3,
+        1.3, 2.2, 3.1,
+        4.0, 2.0, 2.0,
+        4.3, 2.2, 2.1,
+        4.1, 2.2, 2.2,
+    ];
+    const gmm = GMM.CreateGMM(2, 6, new Float32Array(data));
 });
