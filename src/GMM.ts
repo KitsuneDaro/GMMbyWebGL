@@ -38,12 +38,10 @@ export class GMM {
 
     // GMMを作るやつ
     static CreateGMM(
-        dist_n: number, data_n: number, data: Float32Array,
+        dist_n: number, data_n: number, x: Float32Array,
         init_mu: Float32Array = GMM.InitMu(dist_n), init_pi: Float32Array = GMM.InitPi(dist_n), init_sigma: Float32Array = GMM.InitSigma(dist_n)
     ): GMM {
-        // norm_x: sample2D
-        // norm_x_sum: float[]
-        // gamma: sample2D
+        // Shaders
 
         const norm_x_shader = `
             uniform vec3 x[${data_n}];
@@ -83,7 +81,7 @@ export class GMM {
                 norm_x_sum = zero;
 
                 for(int k = 0; k < ${dist_n}; k++){
-                    norm_x_sum += pi[k] * texelFetch(norm_x, ivec2(k, n), 0); // 列、行の順序で指定
+                    norm_x_sum += pi[k] * texelFetch(norm_x, ivec2(n, k), 0).r; // 列、行の順序で指定
                 }
             }
         `
@@ -101,7 +99,7 @@ export class GMM {
                 int n = gl_VertexID % ${data_n}; // 連続していると早くなるのでうれしい
                 int m = gl_VertexID / ${data_n};
 
-                gamma = pi[m] * texelFetch(norm_x, ivec2(m, n), 0) / norm_x_sum[n] + zero; // 列、行の順序で指定
+                gamma = pi[m] * texelFetch(norm_x, ivec2(n, m), 0).r / norm_x_sum[n] + zero; // 列、行の順序で指定
             }
         `;
 
@@ -117,14 +115,14 @@ export class GMM {
                 gamma_sum = zero;
 
                 for(int k = 0; k < ${data_n}; k++){
-                    gamma_sum += texelFetch(gamma, ivec2(m, k), 0);
+                    gamma_sum += texelFetch(gamma, ivec2(k, m), 0).r;
                 }
             }
         `
 
         const mu_pi_sigma_shader = `
             uniform vec3 x[${data_n}];
-            uniform vec3 mu[${dist_n}];
+            uniform vec3 old_mu[${dist_n}];
             uniform sampler2D gamma;
             uniform float gamma_sum[${dist_n}];
 
@@ -139,13 +137,13 @@ export class GMM {
                 mu = zero;
 
                 for(int k = 0; k < ${data_n}; k++){
-                    float gamma_n_m = texelFetch(gamma, ivec2(m, k), 0);
+                    float gamma_n_m = texelFetch(gamma, ivec2(k, m), 0).r;
 
                     mu += gamma_n_m * x[k];
                     sigma += gamma_n_m * mat3(
-                        (x[k][0] - mu[m][0]) * (x[k][0] - mu[m][0]), (x[k][1] - mu[m][1]) * (x[k][0] - mu[m][0]), (x[k][2] - mu[m][2]) * (x[k][0] - mu[m][0]),
-                        (x[k][0] - mu[m][0]) * (x[k][1] - mu[m][1]), (x[k][1] - mu[m][1]) * (x[k][1] - mu[m][1]), (x[k][2] - mu[m][2]) * (x[k][1] - mu[m][1]),
-                        (x[k][0] - mu[m][0]) * (x[k][2] - mu[m][2]), (x[k][1] - mu[m][1]) * (x[k][2] - mu[m][2]), (x[k][2] - mu[m][2]) * (x[k][2] - mu[m][2])
+                        (x[k][0] - old_mu[m][0]) * (x[k][0] - old_mu[m][0]), (x[k][1] - old_mu[m][1]) * (x[k][0] - old_mu[m][0]), (x[k][2] - old_mu[m][2]) * (x[k][0] - old_mu[m][0]),
+                        (x[k][0] - old_mu[m][0]) * (x[k][1] - old_mu[m][1]), (x[k][1] - old_mu[m][1]) * (x[k][1] - old_mu[m][1]), (x[k][2] - old_mu[m][2]) * (x[k][1] - old_mu[m][1]),
+                        (x[k][0] - old_mu[m][0]) * (x[k][2] - old_mu[m][2]), (x[k][1] - old_mu[m][1]) * (x[k][2] - old_mu[m][2]), (x[k][2] - old_mu[m][2]) * (x[k][2] - old_mu[m][2])
                     );
                 }
 
@@ -156,21 +154,9 @@ export class GMM {
             }
         `
 
-        const log_p_func = (gpgpu: GPGPU.GPGPU, norm_x_sum_shader: string) => {
-            var norm_x_sum = new Float32Array(data_n);
-            
-            const log_p_func_param = {
-                id: 'log_p_func_norm_x_sum',
-                vertexShader: norm_x_sum_shader,
-                args: {
-                    'zero': new Float32Array(data_n),
-                    'norm_x_sum': norm_x_sum
-                }
-            };
-    
-            gpgpu.compute(log_p_func_param);
-            gpgpu.clear(log_p_func_param.id);
+        // Functions
 
+        const log_p_func = (norm_x_sum: Float32Array) => {
             var log_p = 0;
 
             for(let k = 0; k < data_n; k++){
@@ -180,9 +166,149 @@ export class GMM {
             return log_p;
         };
 
+        // Variables
         const gpgpu = GPGPU.CreateGPGPU();
 
+        const data_n_dist_n_zero = new Float32Array(data_n * dist_n);
+        const data_n_zero = new Float32Array(data_n);
+        const dist_n_zero = new Float32Array(dist_n);
+        
+        const norm_x = new Float32Array(data_n * dist_n);
+        const norm_x_sum = new Float32Array(data_n);
+
+        var log_p;
+
+        const gamma = new Float32Array(data_n * dist_n);
+        const gamma_sum = new Float32Array(dist_n);
+
+        const pi = init_pi;
+        const mu = init_mu;
+        const sigma = init_sigma;
+
+        // Parameters
+
+        const norm_x_param = {
+            id: 'norm_x_shader',
+            vertexShader: norm_x_shader,
+            args: {
+                'zero': data_n_dist_n_zero,
+                'norm_x': norm_x,
+                'x': x,
+                'mu': mu,
+                'sigma': sigma
+            }
+        };
+
+        const norm_x_sum_param = {
+            id: 'norm_x_sum_shader',
+            vertexShader: norm_x_sum_shader,
+            args: {
+                'zero': data_n_zero,
+                'norm_x': gpgpu.makeTextureInfo('float', [data_n, dist_n], norm_x),
+                'norm_x_sum': norm_x_sum,
+                'pi': pi
+            }
+        };
+
+        const gamma_param = {
+            id: 'gamma_shader',
+            vertexShader: gamma_shader,
+            args: {
+                'zero': data_n_dist_n_zero,
+                'norm_x': gpgpu.makeTextureInfo('float', [data_n, dist_n], norm_x),
+                'norm_x_sum': norm_x_sum,
+                'pi': pi,
+                'gamma': gamma
+            }
+        }
+
+        const gamma_sum_param = {
+            id: 'gamma_sum_shader',
+            vertexShader: gamma_sum_shader,
+            args: {
+                'zero': dist_n_zero,
+                'gamma': gpgpu.makeTextureInfo('float', [data_n, dist_n], gamma),
+                'gamma_sum': gamma_sum
+            }
+        }
+
+        const mu_pi_sigma_param = {
+            id: 'mu_pi_sigma_shader',
+            vertexShader: mu_pi_sigma_shader,
+            args: {
+                'zero': dist_n_zero,
+                'x': x,
+                'old_mu': mu,
+                'gamma': gpgpu.makeTextureInfo('float', [data_n, dist_n], gamma),
+                'gamma_sum': gamma_sum,
+                'mu': mu,
+                'pi': pi,
+                'sigma': sigma
+            }
+        }
+
+        for(let i = 0; i < 100; i++) {
+            // to do
+            // 1. norm_x, norm_sum
+
+            gpgpu.compute(norm_x_param);
+            gpgpu.compute(norm_x_sum_param);
+
+            // 2. log_p, judge break
+            
+            log_p = log_p_func(norm_x_sum);
+
+            // 3. gamma
+
+
+            // 4. gamma_sum
+            // 5. mu, pi, sigma
+        }
+
+        gpgpu.clear(norm_x_param.id);
+        gpgpu.clear(norm_x_sum_param.id);
+
         return new GMM(dist_n, init_mu, init_pi, init_sigma);
+
+        /*
+        const norm_x_func = (gpgpu: any, norm_x_shader: string, norm_x_sum_shader: string, x: Float32Array, mu: Float32Array, pi: Float32Array, sigma: Float32Array) => {
+            const data_n_zero = new Float32Array(data_n);
+            const norm_x = new Float32Array(data_n * dist_n);
+            
+            const norm_x_param = {
+                id: 'log_p_func_norm_x',
+                vertexShader: norm_x_shader,
+                args: {
+                    'zero': data_n_zero,
+                    'norm_x': norm_x,
+                    'x': x,
+                    'mu': mu,
+                    'sigma': sigma
+                }
+            };
+
+            gpgpu.compute(norm_x_param);
+            gpgpu.clear(norm_x_param.id);
+
+            const norm_x_sum = new Float32Array(data_n);
+            
+            const norm_x_sum_param = {
+                id: 'log_p_func_norm_x_sum',
+                vertexShader: norm_x_sum_shader,
+                args: {
+                    'zero': data_n_zero,
+                    'norm_x': gpgpu.makeTextureInfo('float', norm_x, [data_n, dist_n]),
+                    'norm_x_sum': norm_x_sum,
+                    'pi': pi
+                }
+            };
+
+            gpgpu.compute(norm_x_sum_param);
+            gpgpu.clear(norm_x_sum_param.id);
+
+            return [norm_x, norm_x_sum];
+        };
+        */
     }
 
     // 変数を初期化する
@@ -197,17 +323,17 @@ export class GMM {
     }
 
     static InitPi(dist_n: number): Float32Array {
-        const pi = new Array<number>(dist_n).fill(1 / dist_n);
+        const pi = new Array<number>(dist_n).fill(1.0 / dist_n);
         return new Float32Array(pi);
     }
 
     static InitSigma(dist_n: number): Float32Array {
-        const sigma = new Array<number>(9 * dist_n).fill(0);
+        const sigma = new Array<number>(9 * dist_n).fill(0.0);
 
         for (var j = 0; j < dist_n; j++) {
-            sigma[0 + j * 9] = 1;
-            sigma[4 + j * 9] = 1;
-            sigma[8 + j * 9] = 1;
+            sigma[0 + j * 9] = 1.0;
+            sigma[4 + j * 9] = 1.0;
+            sigma[8 + j * 9] = 1.0;
         }
 
         return new Float32Array(sigma);
