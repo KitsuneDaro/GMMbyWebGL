@@ -1,0 +1,40 @@
+
+        /*
+        const norm_x_func = (gpgpu: any, norm_x_shader: string, norm_x_sum_shader: string, x: Float32Array, mu: Float32Array, pi: Float32Array, sigma: Float32Array) => {
+            const data_n_zero = new Float32Array(data_n);
+            const norm_x = new Float32Array(data_n * dist_n);
+            
+            const norm_x_param = {
+                id: 'log_p_func_norm_x',
+                vertexShader: norm_x_shader,
+                args: {
+                    'zero': data_n_zero,
+                    'norm_x': norm_x,
+                    'x': x,
+                    'mu': mu,
+                    'sigma': sigma
+                }
+            };
+
+            gpgpu.compute(norm_x_param);
+            gpgpu.clear(norm_x_param.id);
+
+            const norm_x_sum = new Float32Array(data_n);
+            
+            const norm_x_sum_param = {
+                id: 'log_p_func_norm_x_sum',
+                vertexShader: norm_x_sum_shader,
+                args: {
+                    'zero': data_n_zero,
+                    'norm_x': gpgpu.makeTextureInfo('float', norm_x, [data_n, dist_n]),
+                    'norm_x_sum': norm_x_sum,
+                    'pi': pi
+                }
+            };
+
+            gpgpu.compute(norm_x_sum_param);
+            gpgpu.clear(norm_x_sum_param.id);
+
+            return [norm_x, norm_x_sum];
+        };
+        */

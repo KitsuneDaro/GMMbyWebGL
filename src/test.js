@@ -1,35 +1,42 @@
 const gpgpu = CreateGPGPU();
 
-const A = new Float32Array([1, 1, 1, 1]);
-const B = new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+//const A = new Float32Array(6);
 
 const shader = `
-    in float A;
     uniform sampler2D B;
-    out float O;
 
-    void main() {
-        int x = gl_VertexID % 2;
-        int y = gl_VertexID / 2;
-        float b = float(texelFetch(B, ivec2(x, y), 0).r);
+    in float zero;
+    out vec3 sigma;
 
-        O = A * b;
+    void main(){
+        float a = float(texelFetch(B, ivec2(0, 0), 0));
+
+        sigma = vec3(a, a, a) * (zero + 1.0);
     }
 `;
+
+const B = new Float32Array([
+    1.0, 2.0, 3.0,
+]);
+const zero = new Float32Array(4);
+const sigma = new Float32Array(4 * 3);
+
 const param = {
     id: 'test',
     vertexShader: shader,
     args: {
-        'A': A,
-        'B': gpgpu.makeTextureInfo('float', [3, 3], B),
-        'O': A
+        'B': gpgpu.makeTextureInfo('float', [3, 1], B),
+        'zero': zero,
+        'sigma': sigma
     }
-}
+};
 
 gpgpu.compute(param);
-console.log(A);
+console.log(sigma);
+
+B[0] = 20;
 
 gpgpu.compute(param);
-console.log(A);
+console.log(sigma);
 
 gpgpu.clear(param.id);
